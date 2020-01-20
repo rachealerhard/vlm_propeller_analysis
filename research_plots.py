@@ -15,6 +15,7 @@ from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_induced_veloci
 from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_vortex_distribution import compute_vortex_distribution
 from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_RHS_matrix              import compute_RHS_matrix
 from SUAVE.Plots.Vehicle_Plots import plot_vehicle_vlm_panelization
+#from SUAVE.
 import matplotlib.cm as cm 
     
 def main():
@@ -22,11 +23,11 @@ def main():
     #          Choose wing setup:
     #-------------------------------------------------------------------------
     vehicle = flat_plate_wing() #simple_wing_textbook() #
-    aoa     = np.array([[2.0 * Units.deg]])
+    aoa     = np.array([[8 * Units.deg]])
     state   = cruise_conditions(aoa)    
     mach    = state.conditions.freestream.mach_number
     
-    radius  = 30.0 * Units.inches
+    radius     = 30.0 * Units.inches
     vortices   = 7
     n_sw       = 1#vortices **2
     n_cw       = vortices    
@@ -45,7 +46,7 @@ def main():
     #          CL and Downwash Plots for Validating VLM:
     #------------------------------------------------------------------------------------------- 
     aoa_vec                                       = np.linspace(-2,8,101)
-    prop_loc                                      = [[2.0], [0.2], [0.0]]
+    prop_loc                                      = [[5.0], [4.1], [0.0]]
     CL_vec, CL_flat_plate_theory, w_theory, w_VLM = CL_downwash_validation(vehicle,VLM_settings,aoa_vec,mach,prop_loc,n_sw,n_cw)
     
     ex_loc = np.where(aoa_vec==2.0)
@@ -63,18 +64,21 @@ def main():
     axes_val1.set_ylabel("CL")
     axes_val1.set_title("CL v Alpha, Flat Plate")
     plt.legend()
+    plt.grid()
     
     #Plotting downwash of VLM v. Momentum Theory: 
     fig_val2 = plt.figure()
     axes_val2 = fig_val2.add_subplot(1,1,1)
     axes_val2.plot(aoa_vec, w_theory,'b', label="Momentum Theory")
     #axes_val2.plot(aoa_vec, -w_elliptical,'k', label="Elliptical Theory")
-    axes_val2.plot(aoa_vec, -w_VLM,'r', label="Flat Plate VLM Result")
+    #axes_val2.plot(aoa_vec, -w_VLM,'r', label="Flat Plate VLM Result")
+    #axes_val2.plot(aoa_vec, 2*aoa_vec,'r', label="Flat Plate VLM Result")
     axes_val2.set_xlabel("Angle of Attack (deg)")
     axes_val2.set_ylabel("Downwash Velocity")
     axes_val2.set_title("Downwash v Alpha, Flat Plate")  
     
     plt.legend()
+    plt.grid()
     plt.show()     
     
     #-------------------------------------------------------------------------------------------
@@ -140,7 +144,7 @@ def main():
     #-------------------------------------------------------------------------------------------    
     fig_1  = plt.figure()
     axes_1a = fig_1.add_subplot(1,1,1)
-    c1a     = axes_1a.contourf(prop_x, prop_y, w_xy_plane.T)#, cmap=cm.plasma) #YlOrRd_r
+    c1a     = axes_1a.contourf(prop_x, prop_y, w_xy_plane.T,100)#, cmap=cm.plasma) #YlOrRd_r
     axes_1a.set_xlabel("Chordwise Location (x)")
     axes_1a.set_ylabel("Spanwise Location(y)")   
     axes_1a.set_title("W-velocities, z=%d" %prop_z[z_desired] + ", AoA=%i" %(aoa[0][0]*180/np.pi))
@@ -151,19 +155,22 @@ def main():
     #axes_1b.set_xlabel("Chordwise Location (x)")
     #axes_1b.set_ylabel("Spanwise Location(y)")   
     #axes_1b.set_title("U-velocities, z=%f" %prop_z[z_desired] + ", vortices=%i" %vortices)
-    #plt.colorbar(c1b)    
+    #plt.colorbar(c1b)   
+    
+    
+    
     
     
     fig_2  = plt.figure()
     axes_2a = fig_2.add_subplot(1,2,1)
-    c2a     = axes_2a.contourf(prop_y, prop_z, w_yz_plane.T,40)#, cmap=cm.plasma) #YlOrRd_r
+    c2a     = axes_2a.contourf(prop_y, prop_z, w_yz_plane.T,100)#, cmap=cm.plasma) #YlOrRd_r
     axes_2a.set_xlabel("Spanwise Location (y)")
     axes_2a.set_ylabel("Vertical Location (z)")   
     axes_2a.set_title("W-velocities, x=%f" %prop_x[x_desired] + ", vortices=%i" %vortices)
     plt.colorbar(c2a)
     
     axes_2b = fig_2.add_subplot(1,2,2)
-    c2b     = axes_2b.contourf(prop_y, prop_z, u_yz_plane.T, 40)#, cmap=cm.plasma) #YlOrRd_r
+    c2b     = axes_2b.contourf(prop_y, prop_z, u_yz_plane.T, 100)#, cmap=cm.plasma) #YlOrRd_r
     axes_2b.set_xlabel("Spanwise Location (y)")
     axes_2b.set_ylabel("Vertical Location (z)")
     axes_2b.set_title("U-velocities, x=%f" %prop_x[x_desired] + ", vortices=%i" %vortices)
@@ -608,3 +615,5 @@ def wing_VLM(geometry,state, settings):
 
 if __name__ == '__main__':    
     main()
+
+
