@@ -257,7 +257,7 @@ class Propeller(Energy_Component):
         
         # BET approximation of inflow for BET if the advance ratio is large
         mu_lamda = lamda_c/abs(mu_prop) 
-        if any(mu_lamda[:,0] < 10.0) or prop_config=='pusher':
+        if any(mu_lamda[:,0] < 10.0):# or prop_config=='pusher':
             
             # create radial distribution and aximuthal distribution  
             theta_2d        = np.tile(total_blade_pitch,(N ,1))
@@ -482,8 +482,8 @@ class Propeller(Energy_Component):
               
             va_2d = np.repeat(up.T[ : , np.newaxis , :], N, axis=1).T
             vt_2d = np.repeat(ut.T[ : , np.newaxis , :], N, axis=1).T
-            blade_T_distribution_2d = np.repeat(blade_T_distribution.T[ np.newaxis,:  , :], N, axis=0).T 
-            blade_Q_distribution_2d = np.repeat(blade_Q_distribution.T[ np.newaxis,:  , :], N, axis=0).T                 
+            blade_T_distribution_2d = np.repeat(blade_T_distribution, N, axis=0)#np.repeat(blade_T_distribution.T[ np.newaxis,:  , :], N, axis=0).T
+            blade_Q_distribution_2d = np.repeat(blade_Q_distribution, N, axis=0)#np.repeat(blade_Q_distribution.T[ np.newaxis,:  , :], N, axis=0).T                 
         
 
         psi_2d   = np.repeat(np.atleast_2d(psi).T[np.newaxis,: ,:], N, axis=0).T        
@@ -583,6 +583,7 @@ class Propeller(Energy_Component):
         BBB               = BB*B
         prop_config       = self.prop_config
         case              = self.freestream_case
+        rotation          = self.rotation
         
         if case == 'disturbed_freestream':
             ua_wing             = self.wing_ua
@@ -679,6 +680,8 @@ class Propeller(Energy_Component):
         psi          = np.linspace(0,2*pi,N)
         psi_2d       = np.tile(np.atleast_2d(psi).T,(1,N))
         psi_2d       = np.repeat(psi_2d[np.newaxis, :, :], ctrl_pts, axis=0)  
+        if rotation == 'cw':
+            psi_2d = -1*psi_2d
         
         # 2 dimensiona radial distribution 
         chi_2d       = np.tile(chi ,(N,1))            
@@ -692,7 +695,6 @@ class Propeller(Energy_Component):
             
         # create radial distribution and aximuthal distribution  
         theta_2d        = np.tile(total_blade_pitch,(N ,1))
-        theta_blade_2d  = np.repeat(theta_2d[ np.newaxis,:, :], ctrl_pts, axis=0)    
         omega_2d        = np.tile(np.atleast_3d(omega),(1,N,N))
         a_2d            = np.tile(np.atleast_3d(a),(1,N,N))
         mu_2d           = np.tile(np.atleast_3d(mu),(1,N,N))
@@ -700,7 +702,7 @@ class Propeller(Energy_Component):
         T_2d            = np.tile(np.atleast_3d(T),(1,N,N))
         lamda_c         = np.tile(np.atleast_3d(lamda_c),(1,N,N))
         lamda_mean      = np.tile(np.atleast_3d(lamda_mean),(1,N,N))
-        lamda_mean    += ua_wing
+        lamda_mean     += ua_wing
         mu_prop         = np.tile(np.atleast_3d(mu_prop),(1,N,N))  
         
         beta_tip        = np.tile(np.atleast_3d(theta_2d[:,-1]),(ctrl_pts,1,N))
@@ -711,26 +713,26 @@ class Propeller(Energy_Component):
         kx = np.tan(X/2) 
  
         # initial radial inflow distribution 
-        #lamda_i = lamda_mean*(1 + kx*r_2d*np.cos(psi_2d))     
+        #lamda_i = lamda_mean*(1 + kx*r_2d*np.cos(psi_2d))
         lamda   = lamda_c + lamda_mean
         
-        # axial, tangential and radial components of local blade flow 
+        # axial, tangential and radial components of local blade flow
         y  = r_2d*R
-        ut = omega_2d*y + mu_prop*omega_2d*R*np.sin(psi_2d)                  
-        ur = mu_prop*omega_2d*R*np.cos(psi_2d)                                      
-        up = lamda*omega_2d*R  + r_2d*beta_dot + mu_prop*omega_2d*R*beta*np.cos(psi_2d)  
+        ut = omega_2d*y + mu_prop*omega_2d*R*np.sin(psi_2d) + np.array(ut_wing)*np.sin(psi_2d)             
+        ur = mu_prop*omega_2d*R*np.cos(psi_2d)+ np.array(ut_wing)*np.cos(psi_2d)
+        up = lamda*omega_2d*R  + r_2d*beta_dot + mu_prop*omega_2d*R*beta*np.cos(psi_2d)
         
         # Total speed at blade 
         U   = np.sqrt(ut**2 + ur**2 + up**2 )
         
         # local Mach number at blade 
-        Ma  = U/a_2d  
+        Ma  = U/a_2d
         
         # blade incident angle 
         phi = np.arctan(up/ut)
         
         # local blade angle of attack
-        alpha  = theta_blade_2d - phi 
+        alpha  = theta_2d - phi 
         
         # Estimate Cl max
         nu_2d         =  mu_2d/rho_2d
@@ -790,9 +792,6 @@ class Propeller(Energy_Component):
         vt_2d = ut             
         blade_T_distribution_2d = dFz*deltar
         blade_Q_distribution_2d = dFx*chi*deltar
-        
-        
-        
         
         psi_2d   = np.repeat(np.atleast_2d(psi).T[np.newaxis,: ,:], N, axis=0).T        
         D        = 2*R 
