@@ -23,7 +23,7 @@ def main():
     #-------------------------------------------------------------------------
     #          Specify Flight Conditions:
     #-------------------------------------------------------------------------    
-    cruise_speed = 80 # m/s
+    cruise_speed = 40 # m/s
     aoa          = np.array([[2 * Units.deg]])
     state        = cruise_conditions(cruise_speed,aoa)
     
@@ -57,9 +57,9 @@ def main():
     #-------------------------------------------------------------------------------------------
     #          Updating Vortex Distribution Matrix to Solve for Arbitrary Control Point (x,y,z):
     #-------------------------------------------------------------------------------------------
-    xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT)
-    #yz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT)
-    #xz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT)
+    #xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT)
+    yz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT)
+    xz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT)
     
     ##axes_1b = fig_1.add_subplot(1,2,2)
     ##c1b     = axes_1b.contourf(prop_x, prop_y, u_xy_plane.T)#, cmap=cm.plasma) #YlOrRd_r
@@ -334,7 +334,7 @@ def prop_1(vehicle, conditions):
     prop.disc_area                  = np.pi*(prop.tip_radius**2)
     prop.induced_hover_velocity     = 0 
     prop.design_freestream_velocity = V_design
-    prop.angular_velocity           = 2400. * Units['rpm']
+    prop.angular_velocity           = 2200. * Units['rpm']
     prop.design_Cl                  = 0.7
     prop.design_altitude            = 4000 #20 * Units.feet
    
@@ -599,9 +599,10 @@ def CL_downwash_validation(vehicle, state, VLM_settings):
     #          Range of Angle of Attack:
     #------------------------------------------------------------------------------------------- 
     aoa_vec         = np.linspace(-2,8,20) * Units.deg
-    N               = 10
-    prop_x          = np.array([3.0])
-    prop_y          = np.linspace(0.01,3.5,N)
+    N               = 16
+    prop_x          = np.array([2.0])
+    prop_y          = np.linspace(0,4,N)
+    prop_y2          = np.linspace(0.01,3.4,N)
     prop_z          = np.array([0.0])
     #-------------------------------------------------------------------------------------------
     #          CL Plots for Validating VLM:
@@ -610,7 +611,7 @@ def CL_downwash_validation(vehicle, state, VLM_settings):
     e               = 0.7
     CL_vec          = np.zeros((len(aoa_vec),len(prop_y)))
     CDi_vec         = np.zeros((len(aoa_vec),len(prop_y)))
-    w_vlm           = np.zeros((len(aoa_vec),len(prop_y)))
+    w_vlm           = np.zeros((len(aoa_vec),len(prop_y2)))
     CL_flat_plate   = 2*np.pi*aoa_vec*(AR/(2+AR))
     CDi_flat_plate  = CL_flat_plate**2/(np.pi*e*AR)
     state_new       = state
@@ -626,11 +627,13 @@ def CL_downwash_validation(vehicle, state, VLM_settings):
             CL_vec[i,a]                                       = CL_out
             CDi_vec[i,a]                                      = CDi_out
             
+        for b in range(len(prop_y2)):
             # Determine the induced velocities at the selected location for this state condition:
-            C_mn_2, u,v,w,prop_val  = VLM_velocity_sweep(VD,prop_loc,VLM_settings,state_new,C_mn,MCM,gammaT)
-            w_vlm[i,a]              = w
+            prop_loc = [prop_x, np.array([prop_y2[b]]),prop_z]
+            C_mn_2, u,v,w,prop_val  = VLM_velocity_sweep(VD,prop_loc,VLM_settings,state_new,C_mn,MCM,gammaT)            
+            w_vlm[i,b]              = w
         
-    w_momentum_theory = (2*CL_vec*vehicle.wings.main_wing.areas.reference)/(np.pi*vehicle.wings.main_wing.spans.projected**2)
+    w_momentum_theory = (2*CL_flat_plate*vehicle.wings.main_wing.areas.reference)/(np.pi*vehicle.wings.main_wing.spans.projected**2)
     aoa_vec           = aoa_vec*180/np.pi
     w_vlm_avg         = np.mean(-w_vlm, axis=1)
     CL_vec            = np.mean(CL_vec, axis=1) #CL_vec[:,0]
@@ -736,6 +739,34 @@ def VLM_velocity_sweep(VD,prop_location,VLM_settings,state,C_mn,MCM,gammaT):
     return C_mn, u, v, w, prop_val #C_mn, u[0,0], v[0,0], w[0,0]
 
 
+def parse_velocities_2d(u,v,w,prop_loc,prop_loc_values,vehicle, desired_cross_section_value):
+    
+    prop_x = prop_loc[0]
+    prop_y = prop_loc[1]
+    prop_z = prop_loc[2] 
+    
+    u2d = np.zeros(len(prop_y))
+    v2d = np.zeros(len(prop_y))
+    w2d = np.zeros(len(prop_y))
+
+    w_avg = 0
+    z_desired_val = desired_cross_section_value[2]
+    z_fixed = (np.abs(prop_z - z_desired_val)).argmin()   
+    x_desired_val = desired_cross_section_value[0]
+    x_fixed = (np.abs(prop_x - x_desired_val)).argmin()      
+
+    
+    # Generate results along y:
+    for y in range(len(prop_y)):
+        # Velocities for plotting the x-y plane results with z=0:
+       
+        prop_loc_2d_ysweep = [prop_x[x_fixed], prop_y[y], prop_z[z_fixed]]
+        loc_2d_ysweep = np.where((prop_loc_values == prop_loc_2d_ysweep).all(axis=1))
+        u2d[y] = u[loc_2d_ysweep[0][0]]
+        v2d[y] = v[loc_2d_ysweep[0][0]]
+        w2d[y] = w[loc_2d_ysweep[0][0]]
+    return u2d, v2d, w2d, z_fixed, x_fixed
+
 
 def parse_velocities(u,v,w,prop_loc,prop_loc_values,vehicle, desired_cross_section_value):
     
@@ -813,9 +844,9 @@ def parse_velocities(u,v,w,prop_loc,prop_loc_values,vehicle, desired_cross_secti
                     # Find location of prop_loc_values that matches prop_loc:
                     loc_xz = np.where((prop_loc_values == prop_loc_desired).all(axis=1))
 
-                    u_xz_plane[x][z] = u[loc_xz]
-                    v_xz_plane[x][z] = v[loc_xz]
-                    w_xz_plane[x][z] = w[loc_xz]
+                    u_xz_plane[x][z] = u[loc_xz] [0]
+                    v_xz_plane[x][z] = v[loc_xz] [0]
+                    w_xz_plane[x][z] = w[loc_xz] [0]
         return u_xz_plane, w_xz_plane, y_fixed
     
     
@@ -839,7 +870,7 @@ def xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     
     prop_x = np.arange(-1.5,8.0,x_step_size) #np.linspace(-1.5, 8, 40) #40
     prop_y = np.arange(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2),y_step_size)#1.55*(vehicle.wings.main_wing.spans.projected/2), step_size*2) #np.linspace(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2),40) #
-    prop_z = np.array([0])#np.arange(-1,1,step_size/30) #np.linspace(-2, 2, 31) #31
+    prop_z = np.array([0.0])#np.arange(-1,1,step_size/30) #np.linspace(-2, 2, 31) #31
     prop_loc = [prop_x, prop_y, prop_z]
     
     # Compute velocities:
@@ -855,7 +886,11 @@ def xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
 
     u_xy_plane, w_xy_plane, z_fixed = \
         parse_velocities(u,v,w,prop_loc,prop_loc_values,vehicle,z_desired_val)
-
+    
+    x_desired_val = 2
+    y_desired_val = 0 #not used
+    desired_cross_section_value = np.array([x_desired_val,y_desired_val,z_desired_val])
+    u2d, v2d, w2d, z_fixed, x_fixed = parse_velocities_2d(u,v,w,prop_loc,prop_loc_values,vehicle, desired_cross_section_value)
     
     #-------------------------------------------------------------------------------------------
     #      Plot the induced velocities in the x-y and y-z planes:
@@ -868,7 +903,7 @@ def xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     c1a     = axes_1a.contourf(prop_x, prop_y, u_xy_plane.T,100)#, cmap=cm.jet) #YlOrRd_r
     axes_1a.set_xlabel("Chordwise Location (x)")
     axes_1a.set_ylabel("Spanwise Location(y)")   
-    axes_1a.set_title("$u_{a,wing}$, z=%d" %prop_z[z_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
+    axes_1a.set_title("$u_{a,wing}$, z=%1.2f" %prop_z[z_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
     plt.colorbar(c1a)
     
     fig_2  = plt.figure()
@@ -876,9 +911,16 @@ def xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     c2a     = axes_2a.contourf(prop_x, prop_y, w_xy_plane.T,100)#, cmap=cm.jet) #YlOrRd_r
     axes_2a.set_xlabel("Chordwise Location (x)")
     axes_2a.set_ylabel("Spanwise Location(y)")   
-    axes_2a.set_title("$u_{t,wing}$, z=%d" %prop_z[z_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
+    axes_2a.set_title("$u_{t,wing}$, z=%1.2f" %prop_z[z_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
     plt.colorbar(c2a)       
     
+    fig_3 = plt.figure()
+    axes_3a = fig_3.add_subplot(1,1,1)
+    c3a     = axes_3a.plot(prop_y, w2d)#, cmap=cm.jet) #YlOrRd_r
+    axes_3a.set_xlabel("Spanwise Location (y)")
+    axes_3a.set_ylabel("$\dfrac{w}{V_\infty}$")   
+    axes_3a.set_title("$u_{t,wing}$, z=%1.2f" %prop_z[z_fixed] + ", x=%1.2f" %prop_x[x_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
+    plt.grid()
     plt.show()
     
     return
@@ -886,11 +928,19 @@ def xy_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
 def xz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     aoa = state.conditions.aerodynamics.angle_of_attack
     
+    Nz = 80
+    # Sinusoidal Spacing:
+    thetaz_A = 1-np.sin(np.linspace(np.pi/2,np.pi,Nz))
+    thetaz_B = np.flip(1+np.sin(np.linspace(3*np.pi/2,2*np.pi,Nz)))
+    
+    thetaz = 3*np.concatenate((-thetaz_B,thetaz_A[10:]),axis=None)
+    
+    
     step_size = 0.2
     x_step_size = vehicle.wings.main_wing.chords.root/(VLM_settings.n_cw*4)
-    prop_x = np.arange(-1.5,3.0,x_step_size)#step_size/2) #np.linspace(-1.5, 8, 40) #40
-    prop_y = np.array([1])#np.arange(-1.5*(vehicle.wings.main_wing.spans.projected/2), 0, step_size*2)#1.55*(vehicle.wings.main_wing.spans.projected/2), step_size*2) #np.linspace(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2),40) #
-    prop_z = np.arange(-1.0,1.2,step_size/30) #np.linspace(-2, 2, 31) #31
+    prop_x = np.arange(1.9,3.0,x_step_size)#step_size/2) #np.linspace(-1.5, 8, 40) #40
+    prop_y = np.array([2])#np.arange(-1.5*(vehicle.wings.main_wing.spans.projected/2), 0, step_size*2)#1.55*(vehicle.wings.main_wing.spans.projected/2), step_size*2) #np.linspace(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2),40) #
+    prop_z = (thetaz) #np.arange(-1.0,1.1,step_size/160) #np.linspace(-2, 2, 31) #31
     prop_loc = [prop_x, prop_y, prop_z]
     
     # Compute velocities:
@@ -902,7 +952,7 @@ def xz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     #   At a fixed z- or x- location, determine the induced velocities from the wing in the x-y and y-z planes:
     #--------------------------------------------------------------------------------------------------------------
     # Cross section value of interest:
-    y_desired_val = 1.0
+    y_desired_val = 2.0
 
     u_xz_plane, w_xz_plane, y_fixed = \
         parse_velocities(u,v,w,prop_loc,prop_loc_values,vehicle,y_desired_val)
@@ -911,28 +961,33 @@ def xz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     #-------------------------------------------------------------------------------------------
     #      Plot the induced velocities in the x-y and y-z planes:
     #-------------------------------------------------------------------------------------------  
+    velocity = state.conditions.freestream.velocity
     #V/Vinf
-    u_wing_tot_xz = np.sqrt(np.square(u_xz_plane)+np.square(w_xz_plane))
+    u_wing_tot_xz = np.sqrt(np.square(velocity*(1+u_xz_plane))+np.square(velocity*w_xz_plane))/velocity
+    
+    xwing = [0,2]
+    zwing = np.zeros(len(xwing))    
 
     fig_1  = plt.figure()
     axes_1a = fig_1.add_subplot(1,1,1)
-    c1a     = axes_1a.contourf(prop_x, prop_z, u_xz_plane.T,100)#, cmap=cm.jet) #YlOrRd_r
+    c1a     = axes_1a.contourf(prop_x, prop_z, u_xz_plane.T,100, cmap=cm.jet) #YlOrRd_r
+    wingshape = axes_1a.plot(xwing,zwing,'k',linewidth=2) 
     axes_1a.set_xlabel("Chordwise Location (x)")
-    axes_1a.set_ylabel("Spanwise Location(y)")   
+    axes_1a.set_ylabel("Vertical Location(z)")   
     axes_1a.set_title("$u_{a,wing}$, y=%d" %prop_y[y_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
     plt.colorbar(c1a)
     
     fig_2  = plt.figure()
     axes_2a = fig_2.add_subplot(1,1,1)
     c2a     = axes_2a.contourf(prop_x, prop_z, w_xz_plane.T,100, cmap=cm.jet) #YlOrRd_r
+    wingshape = axes_2a.plot(xwing,zwing,'k',linewidth=2) 
     axes_2a.set_xlabel("Chordwise Location (x)")
-    axes_2a.set_ylabel("Spanwise Location(y)")   
+    axes_2a.set_ylabel("Vertical Location(z)")   
     axes_2a.set_title("Downwash, y=%d" %prop_y[y_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
     plt.colorbar(c2a)    
     
-    Cp = 1-(1+u_xz_plane)**2#1-((1+u_xz_plane)*np.cos(aoa[0][0])+w_xz_plane*np.sin(aoa[0][0]))**2 #1-(1+u_wing_tot_xz)**2 #
-    xwing = [0,2]
-    zwing = np.zeros(len(xwing))
+    Cp = 1-(u_wing_tot_xz)**2#1-((1+u_xz_plane)*np.cos(aoa[0][0])+w_xz_plane*np.sin(aoa[0][0]))**2 #1-(1+u_wing_tot_xz)**2 #
+   
     
     fig_3  = plt.figure()
     axes_3 = fig_3.add_subplot(1,1,1)
@@ -949,11 +1004,17 @@ def xz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
 
 def yz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     aoa = state.conditions.aerodynamics.angle_of_attack
+    Nz = 80*3
+    # Sinusoidal Spacing:
+    thetaz_A = 1-np.sin(np.linspace(np.pi/2,np.pi,Nz))
+    thetaz_B = np.flip(1+np.sin(np.linspace(3*np.pi/2,2*np.pi,Nz)))
     
-    step_size = 0.2
-    prop_x = np.array([vehicle.wings.main_wing.chords.root+1])#.25])#np.arange(-1.5,8.0,step_size/2) #np.linspace(-1.5, 8, 40) #40
-    prop_y = np.arange(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2), step_size*2)#1.55*(vehicle.wings.main_wing.spans.projected/2), step_size*2) #np.linspace(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2),40) #
-    prop_z = np.arange(-3.5,3.5,step_size/30) #np.linspace(-2, 2, 31) #31
+    thetaz = 3*np.concatenate((-thetaz_B,thetaz_A[1:]),axis=None)
+    
+    y_step_size = 0.30769230999999975
+    prop_x = np.array([2.25]) #np.array([vehicle.wings.main_wing.chords.root+1])#.25])#np.arange(-1.5,8.0,step_size/2) #np.linspace(-1.5, 8, 40) #40
+    prop_y = np.arange(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2), y_step_size)#1.55*(vehicle.wings.main_wing.spans.projected/2), step_size*2) #np.linspace(-1.5*(vehicle.wings.main_wing.spans.projected/2), 1.5*(vehicle.wings.main_wing.spans.projected/2),40) #
+    prop_z = thetaz #np.arange(-3.5,3.5,step_size/30) #np.linspace(-2, 2, 31) #31
     prop_loc = [prop_x, prop_y, prop_z]
     
     # Compute velocities:
@@ -965,10 +1026,11 @@ def yz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
     #   At a fixed z- or x- location, determine the induced velocities from the wing in the x-y and y-z planes:
     #--------------------------------------------------------------------------------------------------------------
     # Cross section values of interest:
-    x_desired_val = 3#2.25 #1+ vehicle.wings.main_wing.chords.root
+    x_desired_val = 2.2#2.25 #1+ vehicle.wings.main_wing.chords.root
 
     u_yz_plane, w_yz_plane, x_fixed = \
         parse_velocities(u,v,w,prop_loc,prop_loc_values,vehicle,x_desired_val)
+    
     
     #-------------------------------------------------------------------------------------------
     #      Plot the induced velocities in the x-y and y-z planes:
@@ -978,18 +1040,18 @@ def yz_plane_results(vehicle, VD, VLM_settings, state, C_mn, MCM, gammaT):
        
     fig_1  = plt.figure()
     axes_1a = fig_1.add_subplot(1,1,1)
-    c1a     = axes_1a.contourf(prop_y, prop_z, u_yz_plane.T,100, cmap=cm.jet) #YlOrRd_r
+    c1a     = axes_1a.contourf(prop_y, prop_z, u_yz_plane.T,100)#, cmap=cm.jet) #YlOrRd_r
     axes_1a.set_xlabel("Spanwise Location (y)")
     axes_1a.set_ylabel("Vertical Location(z)")   
-    axes_1a.set_title("$u_{a,wing}$, x=%0.01d" %prop_x[x_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
+    axes_1a.set_title("$u_{a,wing}$, x=%1.2f" %prop_x[x_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
     plt.colorbar(c1a)
     
     fig_2  = plt.figure()
     axes_2a = fig_2.add_subplot(1,1,1)
-    c2a     = axes_2a.contourf(prop_y, prop_z, w_yz_plane.T,100, cmap=cm.jet) #YlOrRd_r
+    c2a     = axes_2a.contourf(prop_y, prop_z, w_yz_plane.T,100)#, cmap=cm.jet) #YlOrRd_r
     axes_2a.set_xlabel("Spanwise Location (y)")
     axes_2a.set_ylabel("Vertical Location(z)")   
-    axes_2a.set_title("Downwash, x=%0.01d" %prop_x[x_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
+    axes_2a.set_title("Downwash, x=%1.2f" %prop_x[x_fixed] + ", AoA=%i" %(aoa[0][0]/Units.deg))
     plt.colorbar(c2a)    
     
     plt.show()

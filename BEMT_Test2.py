@@ -31,9 +31,9 @@ def main():
     #-----------------------------------------------------------------
     # Specify the propeller attributes and setup the vehicle:
     #-----------------------------------------------------------------
-    case         = 'disturbed_freestream'#'uniform_freestream' #'disturbed_freestream' #'uniform_freestream'
+    case         = 'disturbed_freestream' #'uniform_freestream' # 'disturbed_freestream' #'uniform_freestream'
     rotation     = 'ccw'
-    cruise_speed = 40 # 80 gives CL of 0.270, 45 gives CL of 0.854
+    cruise_speed = 50 # 80 gives CL of 0.270, 45 gives CL of 0.854
     state        = cruise_conditions(cruise_speed)  # N is in here as 30
     V_design     = state.conditions.freestream.velocity # 40
     state.conditions.test_BET  = True
@@ -43,10 +43,12 @@ def main():
     #-----------------------------------------------------------------
     # Compute and include wing influence at prop location in prop definition:
     #-----------------------------------------------------------------
-    prop_loc         = [2.25,-4.0,0.0]
+    prop_loc         = [2.25,-4.0,0]
+    
     ua_wing, ut_wing = wing_effect(vehicle, prop_loc)  
     prop             = include_prop_config(vehicle.propulsors.prop_net.propeller,case,ua_wing,ut_wing,rotation)  
     vehicle.propulsors.prop_net.propeller    = prop
+    vehicle.propulsors.prop_net.propeller.prop_loc = prop_loc
     
     #-------------------------------------------------------------------    
     # Generate plots of thrust, torque, etc. on propeller disk:
@@ -102,7 +104,7 @@ def vehicle_setup(conditions):
     # ------------------------------------------------------------------
     #   Vehicle-level Properties
     # ------------------------------------------------------------------    
-    vehicle.mass_properties.takeoff    = 1854. *Units.lbf #2550. * Units.lbf #gross weight of Cessna 172
+    vehicle.mass_properties.takeoff    = 2550. *Units.lbf #2550. * Units.lbf #gross weight of Cessna 172
     vehicle.reference_area             = 16  
     vehicle.passengers                 = 4
     vehicle.cruise_speed               = conditions.freestream.velocity[0][0] # 62.78 is optimal for Cessna 172
@@ -253,47 +255,113 @@ def plots_v_prop_loc(vehicle, conditions,rotation):
 def run_plots_prop_disk(case, rotation, conditions, vehicle):
     ua_wing = vehicle.propulsors.prop_net.propeller.prop_configs.wing_ua
     ut_wing = vehicle.propulsors.prop_net.propeller.prop_configs.wing_ut
+    prop_loc = vehicle.propulsors.prop_net.propeller.prop_loc
     # Run Propeller model 
     F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions) #_simple_pusher(conditions) #prop.spin(conditions) #   
-  
+    
+
+    vehicle.propulsors.prop_net.propeller = include_prop_config(vehicle.propulsors.prop_net.propeller,'uniform_freestream', ua_wing,ut_wing,'ccw')
+    F_iso, Q_iso, P_iso, Cp_iso , outputs_iso , etap_iso = vehicle.propulsors.prop_net.propeller.spin(conditions) #_simple_pusher(conditions) #prop.spin(conditions) #      
+    
+    
+    psi   = outputs.azimuthal_distribution_2d[0,:,:]
+    r     = outputs.radius_distribution_2d[0,:,:] 
+
+    
+    # Isolated Propeller Plots:
+    
+    figT=plt.figure()
+    axisT = figT.add_subplot(1,1,1)
+    axisT.plot(r[0], outputs_iso.blade_T_distribution[0], linewidth=4, label='isolated')
+    for i in range(10):
+        psi_pt = psi[i*2][0]/Units.deg
+        axisT.plot(r[0],outputs.blade_T_distribution_2d[0][i*2], label ='disturbed, $\psi=%1.0f\degree$' %psi_pt)
+        
+    axisT.set_ylabel('Thrust (N)')
+    axisT.set_xlabel('Normalized Radius (r/R)')
+    axisT.set_title('Thrust Distribution along Propeller Blade')
+    plt.legend()
+    plt.grid()    
+    
+    figT=plt.figure()
+    axisT = figT.add_subplot(1,1,1)
+    axisT.plot(r[0], outputs_iso.blade_Q_distribution[0], label='isolated')
+    axisT.set_ylabel('Torque (Nm)')
+    axisT.set_xlabel('Normalized Radius (r/R)')
+    axisT.set_title('Torque Distribution along Propeller Blade')
+    plt.legend()
+    plt.grid()    
+    
+    figT=plt.figure()
+    axisT = figT.add_subplot(1,1,1)
+    for i in range(10):
+        psi_pt = psi[i*2][0]/Units.deg
+        axisT.plot(r[0], outputs.blade_T_distribution_2d[0][i*2]-outputs_iso.blade_T_distribution_2d[0][i*2], label ='disturbed, $\psi=%1.0f\degree$' %psi_pt)#label='loc=[%1.1f' %prop_loc[0] +',%1.1f' %prop_loc[1] + ', %1.1f]' %prop_loc[2] )
+    axisT.set_ylabel('$\Delta T$')
+    axisT.set_xlabel('Normalized Radius (r/R)')
+    axisT.set_title('Thrust Difference from Isolated Propeller')
+    plt.legend()
+    plt.grid()        
+
+    
+    
+    
+    plt.show()
+    
+    
+    
     # ----------------------------------------------------------------------------
     # DISC PLOTS   
     # ----------------------------------------------------------------------------
-    psi   = outputs.azimuthal_distribution_2d[0,:,:]
-    r     = outputs.radius_distribution_2d[0,:,:] 
+    Radius = vehicle.propulsors.prop_net.propeller.tip_radius
     
     # perpendicular velocity, up Plot 
     figT=plt.figure()
     axisT = figT.add_subplot(1,1,1)
-    axisT.plot(r[0], outputs.blade_T_distribution[0])  
-    axisT.set_ylabel('Thrust Distribution')
+    axisT.plot(r[0], outputs.blade_T_distribution[0], label='disturbed, loc=[%1.1f' %prop_loc[0] +',%1.1f' %prop_loc[1] + ', %1.1f]' %prop_loc[2])
+    axisT.plot(r[0], outputs_iso.blade_T_distribution[0], label='isolated')
+    axisT.set_ylabel('Thrust, T (N)')
     axisT.set_xlabel('Normalized Radius (r/R)')
     axisT.set_title('Thrust Distribution along Propeller Blade')
+    plt.legend()
     plt.grid()
 
     
     f2 = plt.figure(1)
     fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
-    CS_0 = axis0.contourf(psi, r, (outputs.va_2d[0]-outputs.velocity[0,0])/outputs.velocity[0,0],100)#,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
+    CS_0 = axis0.contourf(psi, r, (outputs.va_2d[0]-outputs.velocity[0,0])/outputs.velocity[0,0],100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
     cbar0 = plt.colorbar(CS_0, ax=axis0)
     cbar0.ax.set_ylabel('Ua_wing, m/s')
     axis0.set_title('Axial Inflow to Propeller')    
     
     plt.figure(2)
     fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
-    CS_0 = axis0.contourf(psi, r, ua_wing,100)#,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
+    CS_0 = axis0.contourf(psi, r, ua_wing,100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
     cbar0 = plt.colorbar(CS_0, ax=axis0)
     cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
     axis0.set_title('Axial Velocity at Propeller')
     
-    u_wing_tot = np.sqrt(np.square(ua_wing+np.ones_like(ua_wing))+np.square(ut_wing))-np.ones_like(ua_wing)
     plt.figure(3)
     fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
-    CS_0 = axis0.contourf(psi, r, -u_wing_tot,100)#,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
+    CS_0 = axis0.contourf(psi, r, np.array(ut_wing),100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    # -np.pi+psi turns it 
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_t}{V_\infty}$, m/s')
+    axis0.set_title('Tangential Velocity at Propeller')    
+    
+    u_wing_tot = np.sqrt(np.square(ua_wing+np.ones_like(ua_wing))+np.square(ut_wing))-np.ones_like(ua_wing)
+    plt.figure(4)
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, u_wing_tot,100)#,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
     cbar0 = plt.colorbar(CS_0, ax=axis0)
     cbar0.ax.set_ylabel('$\dfrac{V-V_\infty}{V_\infty}$, m/s')
     axis0.set_title('Velocity at Propeller, $\dfrac{y}{b}=-\dfrac{1}{2}$ ')      
     
+    plt.figure(3)
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.blade_T_distribution_2d[0],100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    # -np.pi+psi turns it 
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('Thrust (N)')
+    axis0.set_title('Thrust Distribution of Propeller')      
     
     
     #plt.figure(1)
@@ -407,7 +475,7 @@ def run_plots_prop_disk(case, rotation, conditions, vehicle):
 
 
 
-def prop_1(vehicle, conditions):
+def large_prop_1(vehicle, conditions):
     # Designs the propeller to operate at specified vehicle flight conditions
     V_design = vehicle.cruise_speed
     
@@ -432,6 +500,38 @@ def prop_1(vehicle, conditions):
     prop.design_altitude            = 4000 #20 * Units.feet
    
     prop.design_thrust              = Drag/vehicle.propulsors.prop_net.number_of_engines #(vehicle.mass_properties.takeoff/vehicle.net.number_of_engines)# *contingency_factor
+    prop.design_power               = 0.0
+    prop.thrust_angle               = 0. * Units.degrees
+    prop.inputs.omega               = np.ones((1,1)) *  prop.angular_velocity
+    
+    N = conditions.N
+    prop                            = propeller_design(prop,N)    
+    return prop
+def prop_1(vehicle, conditions):
+    # Designs the propeller to operate at specified vehicle flight conditions
+    V_design = vehicle.cruise_speed
+    
+    # We want thrust=drag; so to specify thrust first find drag: profile drag and drag due to lift; use this for design thrust
+    CL_wing = vehicle.CL_design[0][0]
+    AR      = vehicle.wings.main_wing.aspect_ratio
+    e       = 0.7
+    CD_wing = 0.012 + CL_wing**2/(np.pi*AR*e)
+    Drag    = CD_wing*0.5*conditions.freestream.density[0][0]*V_design**2*vehicle.reference_area 
+    
+    prop                            = SUAVE.Components.Energy.Converters.Propeller()
+    prop.tag                        = 'Cessna_Prop' 
+    
+    prop.tip_radius                 = 0.8*Units.feet #2.8 * Units.feet #0.684 #
+    prop.hub_radius                 = 0.2*Units.feet #0.6 * Units.feet
+    prop.number_blades              = 2
+    prop.disc_area                  = np.pi*(prop.tip_radius**2)
+    prop.induced_hover_velocity     = 0 
+    prop.design_freestream_velocity = V_design
+    prop.angular_velocity           = 2200. * Units['rpm']
+    prop.design_Cl                  = 0.7
+    prop.design_altitude            = 4000 #20 * Units.feet
+   
+    prop.design_thrust              = 0.3*Drag/vehicle.propulsors.prop_net.number_of_engines #(vehicle.mass_properties.takeoff/vehicle.net.number_of_engines)# *contingency_factor
     prop.design_power               = 0.0
     prop.thrust_angle               = 0. * Units.degrees
     prop.inputs.omega               = np.ones((1,1)) *  prop.angular_velocity
@@ -467,7 +567,7 @@ def wing_effect(vehicle,prop_loc):
     mach                                           = state.conditions.freestream.mach_number
     N = state.conditions.N
 
-    vortices   = 4
+    vortices   = 10
     n_sw       = 1#vortices **2
     n_cw       = vortices
 
@@ -551,7 +651,7 @@ def flat_plate_wing():
     wing = SUAVE.Components.Wings.Main_Wing()
     wing.tag = 'main_wing'        
     
-    wing.aspect_ratio            = span/((croot+ctip)/2)
+    wing.aspect_ratio            = AR
     wing.spans.projected         = span
     wing.chords.root             = croot
     wing.chords.tip              = ctip
@@ -560,8 +660,7 @@ def flat_plate_wing():
     wing.twists.tip              = twist_tip
     wing.sweeps.leading_edge     = sweep_le #45. * Units.degrees
     wing.dihedral                = dihedral #0. * Units.degrees
-    wing.aspect_ratio            = AR
-    wing.span_efficiency         = 0.98 
+    wing.span_efficiency         = 0.8 
     wing.origin                  = [0.,0.,0.]
     wing.vertical                = False 
     wing.symmetric               = True
@@ -580,7 +679,7 @@ def flat_plate_wing():
 
 
 def wing_VLM(vehicle,state, VLM_settings):
-     # --------------------------------------------------------------------------------
+    # --------------------------------------------------------------------------------
     #          Get Vehicle Geometry and Unpaack Settings:  
     # --------------------------------------------------------------------------------    
     #vehicle     = vehicle_setup(wing_parameters)
@@ -736,49 +835,49 @@ def VLM_velocity_sweep(VD,prop_location,n_sw,n_cw,aoa,mach,C_mn,MCM,gammaT):
     for x in range(len(prop_location[0])):
         for y in range(len(prop_location[1])):
             for z in range(len(prop_location[2])):
-                cp_x[count]     = prop_location[0][x]
-                cp_y[count]     = prop_location[1][y]
-                cp_z[count]     = prop_location[2][z]
+                cp_x[count] = prop_location[0][x]
+                cp_y[count] = prop_location[1][y]
+                cp_z[count] = prop_location[2][z]
                 prop_val[count] = [cp_x[count],cp_y[count],cp_z[count]]
-                count           = count + 1
-
+                count = count + 1
+                
     max_val_per_loop    = len(C_mn[0])
     num_pts_of_interest = len(cp_x)
-
+    
     u  = np.zeros(num_pts_of_interest)
     v  = np.zeros(num_pts_of_interest)
     w  = np.zeros(num_pts_of_interest)
-
+    
     count  = 0
     num_loops_required = math.ceil(num_pts_of_interest/max_val_per_loop)
-    for i in range(num_loops_required): # Loop through the number of the points and keep track of the count
-        # Updating Vortex Distribution Matrix:
+    remainder = num_pts_of_interest%max_val_per_loop
+    for i in range(num_loops_required):
+        #if i == num_loops_required-1:
+            #max_val_per_loop = remainder        
+        # Loop through 250 of the points and keep track of the count
         VD.XC = cp_x[count:count+max_val_per_loop]
         VD.YC = cp_y[count:count+max_val_per_loop]
         VD.ZC = cp_z[count:count+max_val_per_loop]
-
         # Build new induced velocity matrix, C_mn
         C_mn, DW_mn = compute_induced_velocity_matrix(VD,n_sw,n_cw,aoa,mach)
         MCM = VD.MCM
-
         # Compute induced velocities at control point from all panel influences
         u[count:count+max_val_per_loop] = (C_mn[:,:,:,0]*MCM[:,:,:,0]@gammaT)[:,:,0]
         v[count:count+max_val_per_loop] = (C_mn[:,:,:,1]*MCM[:,:,:,1]@gammaT)[:,:,0]
         w[count:count+max_val_per_loop] = (C_mn[:,:,:,2]*MCM[:,:,:,2]@gammaT)[:,:,0]  
+        
         count += max_val_per_loop
-
-    # Check for abnormalaties in induced velocities
     check = (np.linspace(1,len(u)-1,len(u)-1))
     for val in check:
         j = int(val)
-        if u[j] >= 4 or u[j] <= -4:
+        if u[j] >= 1 or u[j] <= -1:
             u[j] = u[j-1]
-        if v[j] >= 4 or v[j] <= -4:
+        if v[j] >= 1 or v[j] <= -1:
             v[j] = v[j-1]       
-        if w[j] >= 4 or w[j] <= -4:
+        if w[j] >= 1 or w[j] <= -1:
             w[j] = w[j-1]        
-
-    return C_mn, u, v, w, prop_val
+            
+    return C_mn, u, v, w, prop_val #C_mn, u[0,0], v[0,0], w[0,0]
 
 
 if __name__ == '__main__': 
