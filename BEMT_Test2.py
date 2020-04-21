@@ -43,7 +43,7 @@ def main():
     #-----------------------------------------------------------------
     # Compute and include wing influence at prop location in prop definition:
     #-----------------------------------------------------------------
-    prop_loc         = [2.25,-4.0,0]
+    prop_loc         = [2.2, -3.9, 0]
     
     ua_wing, ut_wing = wing_effect(vehicle, prop_loc)  
     prop             = include_prop_config(vehicle.propulsors.prop_net.propeller,case,ua_wing,ut_wing,rotation)  
@@ -348,20 +348,20 @@ def run_plots_prop_disk(case, rotation, conditions, vehicle):
     cbar0.ax.set_ylabel('$\dfrac{V_t}{V_\infty}$, m/s')
     axis0.set_title('Tangential Velocity at Propeller')    
     
-    u_wing_tot = np.sqrt(np.square(ua_wing+np.ones_like(ua_wing))+np.square(ut_wing))-np.ones_like(ua_wing)
     plt.figure(4)
-    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
-    CS_0 = axis0.contourf(psi, r, u_wing_tot,100)#,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    
-    cbar0 = plt.colorbar(CS_0, ax=axis0)
-    cbar0.ax.set_ylabel('$\dfrac{V-V_\infty}{V_\infty}$, m/s')
-    axis0.set_title('Velocity at Propeller, $\dfrac{y}{b}=-\dfrac{1}{2}$ ')      
-    
-    plt.figure(3)
     fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
     CS_0 = axis0.contourf(psi, r, outputs.blade_T_distribution_2d[0],100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    # -np.pi+psi turns it 
     cbar0 = plt.colorbar(CS_0, ax=axis0)
     cbar0.ax.set_ylabel('Thrust (N)')
     axis0.set_title('Thrust Distribution of Propeller')      
+    
+    plt.figure(5)
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.blade_Q_distribution_2d[0],100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    # -np.pi+psi turns it 
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('Torque (Nm)')
+    axis0.set_title('Torque Distribution of Propeller') 
+    
     
     
     #plt.figure(1)
@@ -475,7 +475,7 @@ def run_plots_prop_disk(case, rotation, conditions, vehicle):
 
 
 
-def large_prop_1(vehicle, conditions):
+def prop_1(vehicle, conditions):
     # Designs the propeller to operate at specified vehicle flight conditions
     V_design = vehicle.cruise_speed
     
@@ -489,8 +489,8 @@ def large_prop_1(vehicle, conditions):
     prop                            = SUAVE.Components.Energy.Converters.Propeller()
     prop.tag                        = 'Cessna_Prop' 
     
-    prop.tip_radius                 = 2.8 * Units.feet #0.684 #
-    prop.hub_radius                 = 0.6 * Units.feet
+    prop.tip_radius                 = 1.1*Units.feet #2.8 * Units.feet #0.684 #
+    prop.hub_radius                 = 0.2 *Units.feet #0.6 * Units.feet
     prop.number_blades              = 2
     prop.disc_area                  = np.pi*(prop.tip_radius**2)
     prop.induced_hover_velocity     = 0 
@@ -499,7 +499,7 @@ def large_prop_1(vehicle, conditions):
     prop.design_Cl                  = 0.7
     prop.design_altitude            = 4000 #20 * Units.feet
    
-    prop.design_thrust              = Drag/vehicle.propulsors.prop_net.number_of_engines #(vehicle.mass_properties.takeoff/vehicle.net.number_of_engines)# *contingency_factor
+    prop.design_thrust              = 0.1*Drag/vehicle.propulsors.prop_net.number_of_engines #(vehicle.mass_properties.takeoff/vehicle.net.number_of_engines)# *contingency_factor
     prop.design_power               = 0.0
     prop.thrust_angle               = 0. * Units.degrees
     prop.inputs.omega               = np.ones((1,1)) *  prop.angular_velocity
@@ -507,7 +507,7 @@ def large_prop_1(vehicle, conditions):
     N = conditions.N
     prop                            = propeller_design(prop,N)    
     return prop
-def prop_1(vehicle, conditions):
+def small_prop_1(vehicle, conditions):
     # Designs the propeller to operate at specified vehicle flight conditions
     V_design = vehicle.cruise_speed
     
@@ -531,7 +531,7 @@ def prop_1(vehicle, conditions):
     prop.design_Cl                  = 0.7
     prop.design_altitude            = 4000 #20 * Units.feet
    
-    prop.design_thrust              = 0.3*Drag/vehicle.propulsors.prop_net.number_of_engines #(vehicle.mass_properties.takeoff/vehicle.net.number_of_engines)# *contingency_factor
+    prop.design_thrust              = Drag/vehicle.propulsors.prop_net.number_of_engines #(vehicle.mass_properties.takeoff/vehicle.net.number_of_engines)# *contingency_factor
     prop.design_power               = 0.0
     prop.thrust_angle               = 0. * Units.degrees
     prop.inputs.omega               = np.ones((1,1)) *  prop.angular_velocity
