@@ -14,7 +14,7 @@ from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_induced_veloci
 from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_induced_velocity_matrix import compute_mach_cone_matrix
 from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_vortex_distribution import compute_vortex_distribution
 from SUAVE.Methods.Aerodynamics.Common.Fidelity_Zero.Lift.compute_RHS_matrix              import compute_RHS_matrix
-from SUAVE.Plots.Vehicle_Plots import plot_vehicle_vlm_panelization
+#from SUAVE.Plots.Vehicle_Plots import plot_vehicle_vlm_panelization
 #from SUAVE.
 import matplotlib.cm as cm 
     
@@ -38,8 +38,8 @@ def main():
     vortices   = 10
     
     VLM_settings         = Data()
-    VLM_settings.n_sw    = 1#0*10#5 #vortices**2   # Number of spanwise panels
-    VLM_settings.n_cw    = vortices  #              # Number of chordwise panels
+    VLM_settings.number_panels_spanwise    = 1#0*10#5 #vortices**2   # Number of spanwise panels
+    VLM_settings.number_panels_chordwise   = vortices  #              # Number of chordwise panels
     
     
     ##-------------------------------------------------------------------------------------------
@@ -116,8 +116,8 @@ def main():
     croot = vehicle.wings.main_wing.chords.root
     span = vehicle.wings.main_wing.spans.projected
     radius = vehicle.propulsors.prop_net.propeller.tip_radius
-    n_sw   = VLM_settings.n_sw
-    n_cw   = VLM_settings.n_cw
+    n_sw   = VLM_settings.number_panels_spanwise
+    n_cw   = VLM_settings.number_panels_chordwise
     
     n_w = 1 
     for i in range(n_w):
@@ -343,7 +343,7 @@ def prop_1(vehicle, conditions):
     prop.thrust_angle               = 0. * Units.degrees
     prop.inputs.omega               = np.ones((1,1)) *  prop.angular_velocity
      
-    prop                            = propeller_design(prop,N=20)    
+    prop                            = propeller_design(prop,20)    
     return prop
 
 
@@ -354,8 +354,8 @@ def wing_VLM(vehicle, state, VLM_settings):
     # --------------------------------------------------------------------------------    
     #vehicle     = vehicle_setup(wing_parameters)
     Sref         = vehicle.wings.main_wing.areas.reference
-    n_sw         = VLM_settings.n_sw
-    n_cw         = VLM_settings.n_cw
+    n_sw         = VLM_settings.number_panels_spanwise
+    n_cw         = VLM_settings.number_panels_chordwise
 
     aoa          = state.conditions.aerodynamics.angle_of_attack   # angle of attack  
     mach         = state.conditions.freestream.mach_number         # mach number
@@ -394,7 +394,8 @@ def wing_VLM(vehicle, state, VLM_settings):
         - np.multiply(DW_mn[:,:,:,2],np.atleast_3d(np.cos(phi)*np.cos(delta)))   # valdiated from book eqn 7.42     
    
     # Build the vector
-    RHS = compute_RHS_matrix(VD,n_sw,n_cw,delta,phi,state.conditions,vehicle,True)
+    vehicle.vortex_distribution= VD
+    RHS = compute_RHS_matrix(n_sw,n_cw,delta,phi,state.conditions,vehicle,True,False)
 
     # Compute vortex strength  
     n_cp  = VD.n_cp  
@@ -640,6 +641,16 @@ def CL_downwash_validation(vehicle, state, VLM_settings):
     CDi_vec           = np.mean(CDi_vec, axis=1)
     w_momentum_theory = (2*CL_vec*vehicle.wings.main_wing.areas.reference)/(np.pi*vehicle.wings.main_wing.spans.projected**2)
     
+    span_y = 
+    fig_val1  = plt.figure()
+    axes_val1 = fig_val1.add_subplot(1,1,1)
+    axes_val1.plot(span_y, span_w,'--', linewidth=4)
+    axes_val1.set_xlabel("Angle of Attack (deg)")
+    axes_val1.set_ylabel("CL")
+    axes_val1.set_title("CL v Alpha, Flat Plate")
+    plt.legend()
+    plt.grid()
+    plt.show()
     
     #Plotting CL distribution of VLM v. Theory:
     fig_val1  = plt.figure()
@@ -718,7 +729,7 @@ def VLM_velocity_sweep(VD,prop_location,VLM_settings,state,C_mn,MCM,gammaT):
         VD.YC = cp_y[count:count+max_val_per_loop]
         VD.ZC = cp_z[count:count+max_val_per_loop]
         # Build new induced velocity matrix, C_mn
-        C_mn, DW_mn = compute_induced_velocity_matrix(VD,VLM_settings.n_sw,VLM_settings.n_cw,aoa,mach)
+        C_mn, DW_mn = compute_induced_velocity_matrix(VD,VLM_settings.number_panels_spanwise,VLM_settings.number_panels_chordwise,aoa,mach)
         MCM = VD.MCM
         # Compute induced velocities at control point from all panel influences
         u[count:count+max_val_per_loop] = (C_mn[:,:,:,0]*MCM[:,:,:,0]@gammaT)[:,:,0]
