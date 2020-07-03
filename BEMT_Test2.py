@@ -24,20 +24,32 @@ import matplotlib.cm as cm
 #   Main
 # ----------------------------------------------------------------------
 
-def main():
+def main(prop_type):
     #-----------------------------------------------------------------
     # Specify the analysis settings for the problem:
     #-----------------------------------------------------------------
     analysis_settings                          = Data()
     analysis_settings.case                     = 'disturbed_freestream' #'uniform_freestream' #
-    analysis_settings.rotation                 = 'ccw'
-    analysis_settings.wake_type                = 'viscous' # 'inviscid' # 
+    analysis_settings.rotation                 = 'ccw' #'cwr'
+    analysis_settings.wake_type                = 'inviscid' # 'viscous' # 
     analysis_settings.use_Blade_Element_Theory = True
     
     #-----------------------------------------------------------------
     # Specify the vehicle operating conditions:
     #-----------------------------------------------------------------    
-    cruise_speed = 50 #np.array([25.,30., 35., 40., 45., 50., 55., 60.]) #50 # 80 gives CL of 0.270, 50 gives CLof 0.69, 45 gives CL of 0.854
+    if prop_type == 'small_tip_mount':
+        drag_percent = 0.2 
+        cruise_speed = 50
+        Inboard_Up_Legend = 'Small Prop, Inboard-Up'
+        Inboard_Down_Legend = 'Small Prop, Inboard-Down'
+        Iso_Label = 'Small Isolated Propeller'        
+    else:
+        drag_percent = 1.0 
+        cruise_speed = 50 #np.array([25.,30., 35., 40., 45., 50., 55., 60.]) #50 # 80 gives CL of 0.270, 50 gives CLof 0.69, 45 gives CL of 0.854
+        Inboard_Up_Legend = 'Large Prop, Inboard-Up'
+        Inboard_Down_Legend = 'Large Prop, Inboard-Down'    
+        Iso_Label = 'Large Isolated Propeller'        
+        
     wing_aoa     = np.array([[3*Units.deg]])#np.linspace(-2,10,11)*Units.deg
     altitude     = 4000 #np.array([50., 100., 200., 500., 800., 1000., 1500., 2500., 3000., 4000.]) #4000
     
@@ -46,18 +58,15 @@ def main():
     #-----------------------------------------------------------------
     # Setup the vehicle configuration (one-time deal):
     #-----------------------------------------------------------------
-    prop_type    = 'larger_half_mount' #'small_tip_mount' #   
     vehicle      = vehicle_setup(conditions, prop_type)
     
     #-----------------------------------------------------------------
     # Test off-design condtions:
     #-----------------------------------------------------------------   
     #conditions.aerodynamics.angle_of_attack        = np.array([[5*Units.deg]])
-    #conditions.altitude                            = 50    
+    #conditions.altitude                            = 50
     vehicle      = wing_effect(vehicle,conditions)
     vehicle.propulsors.prop_net.propeller.analysis_settings = analysis_settings
-    
-    drag_percent = 1.0
     
     CL_wing  = vehicle.CL_design
     AR       = vehicle.wings.main_wing.aspect_ratio
@@ -68,37 +77,405 @@ def main():
     #------------------------------------------------------------------------------------------
     # Step 1: Determine U_inf required for trimmed flight for the pusher config (Secant Method)
     #------------------------------------------------------------------------------------------
+    ylocs    = -np.array([0.19603428, 0.58621492, 0.97075, 1.34593622, 1.70816034, 2.05393394, 2.37992703, 2.68300013, 2.96023447, 3.20896013, 3.42678175, 3.61160159, 3.76163974, 3.87545123, 3.95194001, 3.99036945]) #vehicle.VD.YC #np.linspace(-vehicle.propulsors.prop_net.propeller.tip_radius, -0.5*vehicle.wings.main_wing.spans.projected,11)
+    #zlocs    =np.linspace(-vehicle.propulsors.prop_net.propeller.tip_radius, vehicle.propulsors.prop_net.propeller.tip_radius,7)
+    base_prop_loc = copy.deepcopy(vehicle.propulsors.prop_net.propeller.prop_loc)  
+    
+    F_vals_yvar =np.ones_like(ylocs)
+    Q_vals_yvar =np.ones_like(ylocs)
+    P_vals_yvar =np.ones_like(ylocs)
+    Cp_vals_yvar =np.ones_like(ylocs)    
+    etap_vals_yvar =np.ones_like(ylocs)
+    rpm2_vals_yvar =np.ones_like(ylocs)      
+    
+    
+    for i in range(len(ylocs)):
+        diff = 1
+        tol = 1e-5
+        max_iter = 50
+
+        # Change the wing effect based on this new propeller location:        
+        vehicle.propulsors.prop_net.propeller.prop_loc[1] = ylocs[i]
+        vehicle      = wing_effect(vehicle,conditions)
+        
+        # Initial Guess for Angular Rate for Constant Thrust:
+        rpm0 = np.array([[3600*Units.rpm]]) # max stall speed for given conditions
+        vehicle.propulsors.prop_net.propeller.inputs.omega = rpm0
+        F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        f0 = (drag_percent*Drag - 2*F)    
+        
+        # Second Guess:
+        rpm1 = np.array([[2800*Units.rpm]]) # starting velocity
+        vehicle.propulsors.prop_net.propeller.inputs.omega = rpm1
+        F, Q, P, Cp , outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        f1 = (drag_percent*Drag - 2*F)  
+        
+        count = 0
+        while abs(diff)>tol and count<max_iter:
+            # Update freestream velocity to try to reach convergence:
+            rpm2 = rpm1 - f1*((rpm1-rpm0)/(f1-f0))
+            if rpm2 < 0:
+                rpm2 = abs(rpm2)*.98
+
+            vehicle.propulsors.prop_net.propeller.inputs.omega = rpm2
+            
+            # Run propeller model at the given conditions:
+            F, Q, P, Cp, outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+            diff = (drag_percent*Drag - 2*F)
+            
+            f0 = f1
+            f1 = diff
+            rpm0 = rpm1
+            rpm1 = rpm2    
+            
+            count = count + 1
+            
+        if count >= max_iter:
+            etap_vals_yvar[i]=np.nan
+            rpm2_vals_yvar[i]= np.nan
+            Cp_vals_yvar[i] = np.nan
+            Q_vals_yvar[i]   = np.nan  
+            diff = 0.0
+        else:
+            etap_vals_yvar[i]= etap[0][0]
+            rpm2_vals_yvar[i]= rpm2[0][0]
+            Cp_vals_yvar[i] = Cp[0][0]
+            Q_vals_yvar[i]   = Q[0][0]
+        
+        #plot_disks(vehicle,outputs)
+        
+            
+    # ===================================================================================================================================
+    # Save results for the Inboard-Up Case:
+    etap_yvar_CCW = copy.deepcopy(etap_vals_yvar)
+    Q_yvar_CCW = copy.deepcopy(Q_vals_yvar)
+    rpm2_yvar_CCW = copy.deepcopy(rpm2_vals_yvar)  
+    
+    # ===================================================================================================================================
+    # Rerun with Inboard-Down cases now:    
+    F_vals_yvar =np.ones_like(ylocs)
+    Q_vals_yvar =np.ones_like(ylocs)
+    P_vals_yvar =np.ones_like(ylocs)
+    Cp_vals_yvar =np.ones_like(ylocs)    
+    etap_vals_yvar =np.ones_like(ylocs)
+    rpm2_vals_yvar =np.ones_like(ylocs)
+    
+    vehicle.propulsors.prop_net.propeller.prop_loc = copy.deepcopy(base_prop_loc) 
+    analysis_settings.rotation                     = 'cwr' # 'ccw' #
+    vehicle.propulsors.prop_net.propeller.analysis_settings = analysis_settings
+    
+
+    for i in range(len(ylocs)):
+        diff = 1
+        tol = 1e-5
+        max_iter = 50
+
+        # Change the wing effect based on this new propeller location:        
+        vehicle.propulsors.prop_net.propeller.prop_loc[1] = ylocs[i]
+        vehicle      = wing_effect(vehicle,conditions)
+        
+        # Initial Guess:
+        rpm0 = np.array([[3600*Units.rpm]]) # max stall speed for given conditions
+        vehicle.propulsors.prop_net.propeller.inputs.omega = rpm0
+        F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        f0 = (drag_percent*Drag - 2*F)    
+        
+        # Second Guess:
+        rpm1 = np.array([[2800*Units.rpm]]) # starting velocity
+        vehicle.propulsors.prop_net.propeller.inputs.omega = rpm1
+        F, Q, P, Cp , outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        f1 = (drag_percent*Drag - 2*F)    
+        
+        count = 0
+        while abs(diff)>tol and count < max_iter:
+            # Update freestream velocity to try to reach convergence:
+            rpm2 = rpm1 - f1*((rpm1-rpm0)/(f1-f0))
+            if rpm2 < 0:
+                rpm2 = abs(rpm2)*.98
+
+            vehicle.propulsors.prop_net.propeller.inputs.omega = rpm2
+            
+            # Run propeller model at the given conditions:
+            F, Q, P, Cp, outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+            diff = (drag_percent*Drag - 2*F)
+            
+            f0 = f1
+            f1 = diff
+            rpm0 = rpm1
+            rpm1 = rpm2  
+            
+            count = count + 1
+            
+        if count >= max_iter:
+            etap_vals_yvar[i]=np.nan
+            rpm2_vals_yvar[i]= np.nan
+            Cp_vals_yvar[i] = np.nan
+            Q_vals_yvar[i]   = np.nan
+            diff = 0.0
+        else:
+            etap_vals_yvar[i]= etap[0][0]
+            rpm2_vals_yvar[i]= rpm2[0][0]
+            Cp_vals_yvar[i] = Cp[0][0]
+            Q_vals_yvar[i]   = Q[0][0]
+        #plot_disks(vehicle,outputs)
+    
+    etap_yvar_CW = copy.deepcopy(etap_vals_yvar)
+    Q_yvar_CW = copy.deepcopy(Q_vals_yvar)
+    rpm2_yvar_CW = copy.deepcopy(rpm2_vals_yvar)       
+        
+        
+    #=============================================================================================================================================
+    
+    #---------------------------------------------------------------------------------------
+    # Step 2: Now do the same for the isolated propeller
+    #---------------------------------------------------------------------------------------
+
+    vehicle.propulsors.prop_net.propeller.prop_loc = copy.deepcopy(base_prop_loc)
+    analysis_settings.case                         = 'uniform_freestream'
+    analysis_settings.rotation                     = 'ccw' # 'ccw' #
+    vehicle.propulsors.prop_net.propeller.analysis_settings = analysis_settings
     diff = 1
     tol = 1e-5
-    f_old = vehicle.propulsors.prop_net.propeller.inputs.omega
     
     # Initial Guess:
     rpm0 = np.array([[3600*Units.rpm]]) # max stall speed for given conditions
     vehicle.propulsors.prop_net.propeller.inputs.omega = rpm0
-    F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
-    f0 = (drag_percent*Drag - 2*F)    
+    F_iso, Q_iso, P_iso, Cp_iso , outputs_iso , etap_iso = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+    f0 = (drag_percent*Drag - 2*F_iso)    
     
     # Second Guess:
-    rpm1 = np.array([[2800*Units.rpm]]) # starting velocity
+    rpm1 = np.array([[3400*Units.rpm]]) # starting velocity
     vehicle.propulsors.prop_net.propeller.inputs.omega = rpm1
-    F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
-    f1 = (drag_percent*Drag - 2*F)    
+    F_iso, Q_iso, P_iso, Cp_iso , outputs_iso , etap_iso = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+    f1 = (drag_percent*Drag - 2*F_iso)    
     
     while abs(diff)>tol:
         
         # Update freestream velocity to try to reach convergence:
-        rpm2 = rpm1 - f1*((rpm1-rpm0)/(f1-f0))
-        vehicle.propulsors.prop_net.propeller.inputs.omega = rpm2
+        rpm2_iso = rpm1 - f1*((rpm1-rpm0)/(f1-f0))
+        vehicle.propulsors.prop_net.propeller.inputs.omega = rpm2_iso
         
         # Run propeller model at the given conditions:
-        F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
-        diff = (drag_percent*Drag - 2*F)
+        F_iso, Q_iso, P_iso, Cp_iso , outputs_iso , etap_iso = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        diff = (drag_percent*Drag - 2*F_iso)
         
         f0 = f1
         f1 = diff
         rpm0 = rpm1
-        rpm1 = rpm2         
-        
+        rpm1 = rpm2_iso 
+
+    plot_results = Data()
+    plot_results.rpm_Inboard_Up      = rpm2_yvar_CCW
+    plot_results.rpm_Inboard_Down    = rpm2_yvar_CW
+    plot_results.rpm_Iso             = rpm2_iso[0][0]
+    plot_results.Q_Inboard_Up        = Q_yvar_CCW
+    plot_results.Q_Inboard_Down      = Q_yvar_CW
+    plot_results.Q_Iso               = Q_iso[0][0]
+    plot_results.etap_Inboard_Up     = etap_yvar_CCW
+    plot_results.etap_Inboard_Down   = etap_yvar_CW
+    plot_results.etap_Iso            = etap_iso[0][0]
+    plot_results.vehicle             = vehicle
+    plot_results.ylocs               = ylocs
+    plot_results.Inboard_Up_Legend   = Inboard_Up_Legend
+    plot_results.Inboard_Down_Legend = Inboard_Down_Legend
+    plot_results.Iso_Label           = Iso_Label
+    plot_results.Advance_Ratio_Iso   = cruise_speed/((2/(2*np.pi))*rpm2_iso[0][0]*vehicle.propulsors.prop_net.propeller.tip_radius*2)
+    
+    return plot_results
+
+def main_test():
+    #-----------------------------------------------------------------
+    # Specify the analysis settings for the problem:
+    #-----------------------------------------------------------------
+    analysis_settings                          = Data()
+    analysis_settings.case                     = 'disturbed_freestream' #'uniform_freestream' #
+    analysis_settings.rotation                 = 'ccw' #'cwr'
+    analysis_settings.wake_type                = 'inviscid' #'viscous' #  
+    analysis_settings.use_Blade_Element_Theory = True
+    
+    #-----------------------------------------------------------------
+    # Specify the vehicle operating conditions:
+    #-----------------------------------------------------------------    
+    cruise_speed = 30 #np.array([25.,30., 35., 40., 45., 50., 55., 60.]) #50 # 80 gives CL of 0.270, 50 gives CLof 0.69, 45 gives CL of 0.854
+    wing_aoa     = np.array([[3*Units.deg]])#np.linspace(-2,10,11)*Units.deg
+    altitude     = 4000 #np.array([50., 100., 200., 500., 800., 1000., 1500., 2500., 3000., 4000.]) #4000
+    
+    conditions   = cruise_conditions(cruise_speed, altitude, wing_aoa) 
+    
+    #-----------------------------------------------------------------
+    # Setup the vehicle configuration (one-time deal):
+    #-----------------------------------------------------------------
+    prop_type    = 'small_tip_mount' # 'larger_half_mount' #  
+    vehicle      = vehicle_setup(conditions, prop_type)
+    
+    #-----------------------------------------------------------------
+    # Test off-design condtions:
+    #-----------------------------------------------------------------   
+    #conditions.aerodynamics.angle_of_attack        = np.array([[5*Units.deg]])
+    #conditions.altitude                            = 50
+    vehicle      = wing_effect(vehicle,conditions)
+    vehicle.propulsors.prop_net.propeller.analysis_settings = analysis_settings
+    
+    drag_percent = 0.2 #1.0
+    
+    CL_wing  = vehicle.CL_design
+    AR       = vehicle.wings.main_wing.aspect_ratio
+    e        = 0.7
+    CD_wing  = 0.012 + CL_wing**2/(np.pi*AR*e)      
+    Drag     = CD_wing*0.5*conditions.freestream.density*vehicle.cruise_speed**2*vehicle.reference_area    
+    
+    #------------------------------------------------------------------------------------------
+    # Step 1: Determine U_inf required for trimmed flight for the pusher config (Secant Method)
+    #------------------------------------------------------------------------------------------
+    ylocs    =np.array([-4.0]) #np.linspace(-vehicle.propulsors.prop_net.propeller.tip_radius, -0.5*vehicle.wings.main_wing.spans.projected,7)
+    zlocs    =np.array([-0.0]) #np.linspace(-vehicle.propulsors.prop_net.propeller.tip_radius, vehicle.propulsors.prop_net.propeller.tip_radius,5)
+    base_prop_loc = copy.deepcopy(vehicle.propulsors.prop_net.propeller.prop_loc)
+    
+    F_vals =np.ones([len(ylocs),len(zlocs)])
+    Q_vals =np.ones([len(ylocs),len(zlocs)])
+    P_vals =np.ones([len(ylocs),len(zlocs)])
+    Cp_vals =np.ones([len(ylocs),len(zlocs)])      
+    etap_vals =np.ones([len(ylocs),len(zlocs)])
+    rpm2_vals =np.ones([len(ylocs),len(zlocs)])
+                              
+    #F_vals_zvar =np.ones_like(zlocs)
+    #Q_vals_zvar =np.ones_like(zlocs)
+    #P_vals_zvar =np.ones_like(zlocs)
+    #Cp_vals_zvar =np.ones_like(zlocs)    
+    #etap_vals_zvar =np.ones_like(zlocs)
+    #rpm2_vals_zvar =np.ones_like(zlocs)    
+    
+    for i in range(len(ylocs)):
+        for j in range(len(zlocs)):
+            
+            diff = 1
+            tol = 1e-5
+            
+            vehicle.propulsors.prop_net.propeller.prop_loc[1] = ylocs[i]
+            vehicle.propulsors.prop_net.propeller.prop_loc[2] = zlocs[j]
+            
+            # Change the wing effect based on this new propeller location:
+            vehicle      = wing_effect(vehicle,conditions)
+            
+            # Initial Guess:
+            rpm0 = np.array([[3800*Units.rpm]]) # max stall speed for given conditions
+            vehicle.propulsors.prop_net.propeller.inputs.omega = rpm0
+            F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+            f0 = (drag_percent*Drag - 2*F)    
+            
+            # Second Guess:
+            rpm1 = np.array([[3600*Units.rpm]]) # starting velocity
+            vehicle.propulsors.prop_net.propeller.inputs.omega = rpm1
+            F, Q, P, Cp , outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+            f1 = (drag_percent*Drag - 2*F)    
+            
+            while abs(diff)>tol:
+                # Update freestream velocity to try to reach convergence:
+                rpm2 = rpm1 - f1*((rpm1-rpm0)/(f1-f0))
+                if rpm2 < 0:
+                    rpm2 = abs(rpm2)
+                #elif rpm2>300:
+                    #rpm2=np.ones_like(rpm1)*230
+                vehicle.propulsors.prop_net.propeller.inputs.omega = rpm2
+                
+                # Run propeller model at the given conditions:
+                F, Q, P, Cp, outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+                diff = (drag_percent*Drag - 2*F)
+                
+                f0 = f1
+                f1 = diff
+                rpm0 = rpm1
+                rpm1 = rpm2    
+                #if ((rpm2>3800*Units.rpm) and abs(diff)<10) or (rpm2<2000*Units.rpm):
+                    #catch = True
+                
+            etap_vals[i][j] = etap[0][0]
+            rpm2_vals[i][j] = rpm2[0][0]
+            Q_vals[i][j] = Q[0][0]
+            
+    #vehicle.propulsors.prop_net.propeller.prop_loc = base_prop_loc
+    #for i in range(len(zlocs)):
+        #diff = 1
+        #tol = 1e-5
+        #f_old = vehicle.propulsors.prop_net.propeller.inputs.omega
+        #vehicle.propulsors.prop_net.propeller.prop_loc[2] = zlocs[i]
+
+        ## Change the wing effect based on this new propeller location:
+        #vehicle      = wing_effect(vehicle,conditions)
+
+        ## Initial Guess:
+        #rpm0 = np.array([[3600*Units.rpm]]) # max stall speed for given conditions
+        #vehicle.propulsors.prop_net.propeller.inputs.omega = rpm0
+        #F, Q, P, Cp , outputs , etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        #f0 = (drag_percent*Drag - 2*F)    
+
+        ## Second Guess:
+        #rpm1 = np.array([[2800*Units.rpm]]) # starting velocity
+        #vehicle.propulsors.prop_net.propeller.inputs.omega = rpm1
+        #F, Q, P, Cp , outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+        #f1 = (drag_percent*Drag - 2*F)    
+
+        #while abs(diff)>tol:
+            ## Update freestream velocity to try to reach convergence:
+            #rpm2 = rpm1 - f1*((rpm1-rpm0)/(f1-f0))
+            #vehicle.propulsors.prop_net.propeller.inputs.omega = rpm2
+
+            ## Run propeller model at the given conditions:
+            #F, Q, P, Cp, outputs, etap = vehicle.propulsors.prop_net.propeller.spin(conditions,vehicle)
+            #diff = (drag_percent*Drag - 2*F)
+
+            #f0 = f1
+            #f1 = diff
+            #rpm0 = rpm1
+            #rpm1 = rpm2    
+        #etap_vals_zvar[i] = etap[0][0]
+        #rpm2_vals_zvar[i] = rpm2[0][0]
+        #Q_vals_zvar[i] = Q[0][0]        
+    
+    
+    # Efficiency vs. Y-location:
+    
+    #fig = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #axes.plot(zlocs,etap_vals_zvar)
+    #axes.set_xlabel("Vertical Location of Propeller")
+    #axes.set_ylabel("Propulsive Efficiency at Trimmed Condition")
+    #axes.set_title("Effect of propeller location on propulsive efficiency")
+    
+    #fig = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #axes.plot(ylocs,etap_vals_yvar)
+    #axes.set_xlabel("Spanwise Location of Propeller")
+    #axes.set_ylabel("Propulsive Efficiency at Trimmed Condition")
+    #axes.set_title("Effect of propeller location on propulsive efficiency")
+    
+    #plt.show()
+    
+    #fig  = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #c    = axes.contourf(zlocs, ylocs, etap_vals,100)#, cmap=cm.jet) #YlOrRd_r
+    #axes.set_ylabel("Spanwise Location (y)")
+    #axes.set_xlabel("Vertical Location(z)")   
+    #axes.set_title("Propulsive Efficiency")
+    #plt.colorbar(c)    
+    
+    #fig  = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #c    = axes.contourf(zlocs, ylocs, Q_vals,100)#, cmap=cm.jet) #YlOrRd_r
+    #axes.set_ylabel("Spanwise Location (y)")
+    #axes.set_xlabel("Vertical Location(z)")   
+    #axes.set_title("Torque (Nm)")
+    #plt.colorbar(c) 
+    
+    #fig  = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #c    = axes.contourf(zlocs, ylocs, rpm2_vals,100)#, cmap=cm.jet) #YlOrRd_r
+    #axes.set_ylabel("Spanwise Location (y)")
+    #axes.set_xlabel("Vertical Location(z)")   
+    #axes.set_title("Angular Rotation Rate")
+    #plt.colorbar(c)      
+    
+    #plt.show()
     
     #-----------------------------------------------   
     # Step 1b: Plot Results for Distrubed Propeller
@@ -106,12 +483,57 @@ def main():
     psi   = outputs.azimuthal_distribution_2d[0,:,:]
     r     = outputs.blade_radial_distribution_normalized_2d[0,:,:]    
     
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.local_aoa[0]/Units.deg,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('degrees')
+    axis0.set_title('Local Blade Effective Angle of Attack')  
+    
+    plt.show()
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.ut_wing,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Tangential Velocity from Wing')  
+        
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.uv_wing,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Radial Velocity From Wing')
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.ua_wing,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Axial Velocity From Wing')    
+    
+    
+    
+    
     #plt.figure(0)
     fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
     CS_0 = axis0.contourf(psi, r, -np.ones_like(outputs.axial_velocity_distribution_2d[0]) + outputs.axial_velocity_distribution_2d[0]/outputs.velocity[0][0],100,cmap=plt.cm.jet)    
     cbar0 = plt.colorbar(CS_0, ax=axis0)
     cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
-    axis0.set_title('Axial Inflow to Propeller')  
+    axis0.set_title('Axial Velocity of Propeller')  
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.tangential_velocity_distribution_2d[0]/outputs.velocity[0][0],100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Tengential Velocity of Propeller')   
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.radial_velocity_distribution_2d[0],100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Radial Velocity of Propeller')      
+    
+    
+    
+    
     
     #plt.figure(1)
     fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
@@ -127,7 +549,7 @@ def main():
     cbar0.ax.set_ylabel('Torque (Nm)')
     axis0.set_title('Torque Distribution of Propeller') 
     
-    #plt.show()    
+    plt.show()    
     
     #---------------------------------------------------------------------------------------
     # Step 2: Now do the same for the isolated propeller
@@ -163,7 +585,7 @@ def main():
         f0 = f1
         f1 = diff
         rpm0 = rpm1
-        rpm1 = rpm2_iso         
+        rpm1 = rpm2_iso 
          
     
     #----------------------------------------------   
@@ -220,7 +642,7 @@ def cruise_conditions(cruise_speed, alt, aoa):
     velocity_freestream  = np.array([[cruise_speed]]) #m/s this is the velocity at which the propeller is designed for based on the CLwing value being near 0.7
     mach                 = velocity_freestream/a #np.array([[0.8]]) #
     re                   = rho*a*mach/mu
-    N   = 361
+    N   = 251
     
     conditions                                     = SUAVE.Analyses.Mission.Segments.Conditions.Aerodynamics() 
     conditions.altitude                            = alt
@@ -294,7 +716,7 @@ def prop_1(vehicle, conditions):
     prop                            = SUAVE.Components.Energy.Converters.Propeller()
     prop.tag                        = 'Cessna_Prop' 
     
-    prop.tip_radius                 = 2.8 * Units.feet #0.684 # 2.8
+    prop.tip_radius                 = 0.875 #2.8 * Units.feet #0.684 # 2.8
     prop.hub_radius                 = 0.6 * Units.feet
     prop.number_blades              = 2
     prop.disc_area                  = np.pi*(prop.tip_radius**2)
@@ -341,7 +763,7 @@ def small_prop_1(vehicle, conditions):
     prop                            = SUAVE.Components.Energy.Converters.Propeller()
     prop.tag                        = 'Cessna_Prop' 
     
-    prop.tip_radius                 = 1.1*Units.feet #2.8 * Units.feet #0.684 #
+    prop.tip_radius                 = 0.375 #1.1*Units.feet #2.8 * Units.feet #0.684 #
     prop.hub_radius                 = 0.2*Units.feet #0.6 * Units.feet
     prop.number_blades              = 2
     prop.disc_area                  = np.pi*(prop.tip_radius**2)
@@ -356,7 +778,7 @@ def small_prop_1(vehicle, conditions):
     prop.thrust_angle               = 0. * Units.degrees
     prop.inputs.omega               = np.ones((1,1)) *  prop.angular_velocity
     
-    prop.prop_loc                   = [2.2, -4.0, 0]
+    prop.prop_loc                   = [2.2, -2.0, 0]
     
     #prop.airfoil_geometry          = ['NACA_4412_geo.txt'] #,'Clark_y.txt']
     #prop.airfoil_polars            = [['NACA_4412_polar_Re_50000.txt','NACA_4412_polar_Re_100000.txt',
@@ -548,6 +970,7 @@ def plots_v_prop_loc(vehicle, conditions,rotation):
 def run_plots_prop_disk(conditions, vehicle):
     
     ua_wing = vehicle.propulsors.prop_net.propeller.disturbed_u
+    uv_wing = vehicle.propulsors.prop_net.propeller.disturbed_v
     ut_wing = vehicle.propulsors.prop_net.propeller.disturbed_w
     prop_loc = vehicle.propulsors.prop_net.propeller.prop_loc
     
@@ -711,9 +1134,9 @@ def wing_effect(vehicle,conditions):
     # --------------------------------------------------------------------------------
     #          Settings and Calling for VLM:  
     # --------------------------------------------------------------------------------
-    vortices            = 10
+    vortices            = 4
     VLM_settings        = Data()
-    VLM_settings.number_panels_spanwise   = 1#vortices **2
+    VLM_settings.number_panels_spanwise   = vortices **2
     VLM_settings.number_panels_chordwise  = vortices
 
     VLM_outputs   = wing_VLM(vehicle, conditions, VLM_settings)
@@ -755,7 +1178,9 @@ def wing_effect(vehicle,conditions):
                 v_pts[i][k] = vk[0]
                 w_pts[i][k] = wk[0]   
     vehicle.propulsors.prop_net.propeller.disturbed_u = u_pts
+    vehicle.propulsors.prop_net.propeller.disturbed_v = v_pts
     vehicle.propulsors.prop_net.propeller.disturbed_w = w_pts
+    vehicle.VD = VD
                            
     return vehicle
 
@@ -1064,7 +1489,206 @@ def VLM_velocity_sweep(conditions, VLM_outputs, prop_location, VLM_settings):
             
     return C_mn, u, v, w, prop_val #C_mn, u[0,0], v[0,0], w[0,0]
 
+def plot_disks(vehicle,outputs):
+    psi   = outputs.azimuthal_distribution_2d[0,:,:]
+    r     = outputs.blade_radial_distribution_normalized_2d[0,:,:]  
+    
+    # Adjust so that the hub is included in the plot:
+    rh = vehicle.propulsors.prop_net.propeller.hub_radius
+        
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.ut_wing,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Tangential Velocity from Wing')
+    axis0.set_rorigin(-rh)
+    # offset_radial_axis(ax) # Matplotlib < 2.2.3
+    #add_scale(axis0)    
+        
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.uv_wing,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Radial Velocity From Wing')
+    axis0.set_rorigin(-rh)
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.ua_wing,100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Axial Velocity From Wing')
+    axis0.set_rorigin(-rh)
+    
+    
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, -np.ones_like(outputs.axial_velocity_distribution_2d[0]) + outputs.axial_velocity_distribution_2d[0]/outputs.velocity[0][0],100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Axial Velocity of Propeller') 
+    axis0.set_rorigin(-rh)
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.tangential_velocity_distribution_2d[0]/outputs.velocity[0][0],100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Tengential Velocity of Propeller')   
+    axis0.set_rorigin(-rh)
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.radial_velocity_distribution_2d[0],100,cmap=plt.cm.jet)    
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('$\dfrac{V_a-V_\infty}{V_\infty}$, m/s')
+    axis0.set_title('Radial Velocity of Propeller')
+    axis0.set_rorigin(-rh)
+    
+    
+    
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.thrust_distribution_2d[0],100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    # -np.pi+psi turns it 
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('Thrust (N)')
+    axis0.set_title('Thrust Distribution of Propeller')  
+    axis0.set_rorigin(-rh)
+    
+    #plt.figure(2)
+    fig0, axis0 = plt.subplots(subplot_kw=dict(projection='polar'))
+    CS_0 = axis0.contourf(psi, r, outputs.torque_distribution_2d[0],100,cmap=plt.cm.jet)#,cmap=plt.cm.jet)    # -np.pi+psi turns it 
+    cbar0 = plt.colorbar(CS_0, ax=axis0)
+    cbar0.ax.set_ylabel('Torque (Nm)')
+    axis0.set_title('Torque Distribution of Propeller') 
+    axis0.set_rorigin(-rh)
+    
+    plt.show()
+    return
 
-if __name__ == '__main__': 
-    main()    
-    plt.show()   
+
+if __name__ == '__main__':
+    prop_type    =   'small_tip_mount' #  'larger_half_mount' #
+    res = main(prop_type)
+    prop_type    =   'larger_half_mount' #'small_tip_mount' #  
+    res2 = main(prop_type)
+    
+
+    # Efficiency vs. Y-location:
+ 
+ 
+     
+    fig = plt.figure()
+    axes = fig.add_subplot(1,1,1)
+    #plt.style.use('grayscale')
+    #plt.rcParams["font.family"] = "Times New Roman"        
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,(100*(res.etap_Inboard_Up-res.etap_Iso)/res.etap_Iso), 'o-', label=res.Inboard_Up_Legend)
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,(100*(res.etap_Inboard_Down-res.etap_Iso)/res.etap_Iso), 's-', label=res.Inboard_Down_Legend)
+    
+
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,(100*(res2.etap_Inboard_Up-res2.etap_Iso)/res2.etap_Iso), 'o-', label=res2.Inboard_Up_Legend)
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,(100*(res2.etap_Inboard_Down-res2.etap_Iso)/res2.etap_Iso), 's-', label=res2.Inboard_Down_Legend)
+    
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,np.zeros_like(res.etap_Inboard_Up), 'x-', label='Isolated Propeller')
+    #axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,np.zeros_like(res2.etap_Inboard_Up), 'x-', label=res2.Iso_Label)
+    axes.set_xlabel('Spanwise Station, $\dfrac{2y}{b}$')
+    axes.set_ylabel("% Change in Propulsive Efficiency")
+    axes.set_title("Effect of propeller location on propulsive efficiency")
+    plt.legend()
+    
+    
+    
+    fig = plt.figure()
+    axes = fig.add_subplot(1,1,1)
+    #plt.style.use('grayscale')
+    #plt.rcParams["font.family"] = "Times New Roman"        
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,res.Q_Inboard_Up, 'o-',label=res.Inboard_Up_Legend)
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,res.Q_Inboard_Down, 's-', label=res.Inboard_Down_Legend)
+    
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,res2.Q_Inboard_Up, 'o-',label=res2.Inboard_Up_Legend)
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,res2.Q_Inboard_Down, 's-', label=res2.Inboard_Down_Legend)
+    
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,np.ones_like(res.Q_Inboard_Down)*res.Q_Iso, 'x-', label=res.Iso_Label)
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,np.ones_like(res2.Q_Inboard_Down)*res2.Q_Iso, 'x-', label=res2.Iso_Label)
+    axes.set_xlabel('Spanwise Station, $\dfrac{2y}{b}$')
+    axes.set_ylabel("Q")
+    axes.set_title("Effect of propeller location on torque")
+    plt.legend()   
+    
+    
+    
+    fig = plt.figure()
+    axes = fig.add_subplot(1,1,1)
+    #plt.style.use('grayscale')
+    #plt.rcParams["font.family"] = "Times New Roman"        
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,res.rpm_Inboard_Up/Units.rpm, 'o-',label=res.Inboard_Up_Legend)
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,res.rpm_Inboard_Down/Units.rpm, 's-', label=res.Inboard_Down_Legend)
+ 
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,res2.rpm_Inboard_Up/Units.rpm, 'o-',label=res2.Inboard_Up_Legend)
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,res2.rpm_Inboard_Down/Units.rpm, 's-', label=res2.Inboard_Down_Legend)
+    
+    axes.plot(res.ylocs*2/res.vehicle.wings.main_wing.spans.projected,np.ones_like(res.rpm_Inboard_Down)*res.rpm_Iso/Units.rpm, 'x-', label=res.Iso_Label)
+    axes.plot(res2.ylocs*2/res2.vehicle.wings.main_wing.spans.projected,np.ones_like(res2.rpm_Inboard_Down)*res2.rpm_Iso/Units.rpm, 'x-', label=res2.Iso_Label)
+    
+    axes.set_xlabel('Spanwise Station, $\dfrac{2y}{b}$')
+    axes.set_ylabel("RPMs")
+    axes.set_title("Effect of propeller location on angular rate")
+    plt.legend()       
+   
+    plt.show()
+    
+    stop_val = 1
+   
+    #fig = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    ##plt.style.use('grayscale')
+    ##plt.rcParams["font.family"] = "Times New Roman"    
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,(100*(etap_zvar_LargeCCW-etap_iso)/etap_iso)[0], 'o-', label=Inboard_Up_Legend)
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,(100*(etap_zvar_LargeCW-etap_iso)/etap_iso)[0], 's-', label=Inboard_Down_Legend)
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,np.zeros_like(etap_zvar_LargeCCW), 'x-', label='Isolated Propeller')    
+    #axes.set_xlabel('Vertical Station, $\dfrac{z}{R}$')
+    #axes.set_ylabel("% Change in Propulsive Efficiency")
+    #axes.set_title("Effect of propeller location on propulsive efficiency")
+    #plt.legend()   
+    
+    #fig = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    ##plt.style.use('grayscale')
+    ##plt.rcParams["font.family"] = "Times New Roman"        
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,Q_zvar_LargeCCW, 'o-', label=Inboard_Up_Legend)
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,Q_zvar_LargeCW, 's-', label=Inboard_Down_Legend)
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,np.ones_like(Q_zvar_LargeCW)*Q_iso[0][0], 'x-', label='Isolated Propeller')
+    #axes.set_xlabel('Vertical Station, $\dfrac{z}{R}$')
+    #axes.set_ylabel("Q")
+    #axes.set_title("Effect of propeller location on torque")
+    #plt.legend()
+    
+    #fig = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    ##plt.style.use('grayscale')
+    ##plt.rcParams["font.family"] = "Times New Roman"        
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,rpm2_zvar_LargeCCW/Units.rpm, 'o-',label=Inboard_Up_Legend)
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,rpm2_zvar_LargeCW/Units.rpm, 's-', label=Inboard_Down_Legend)
+    #axes.plot(zlocs/vehicle.propulsors.prop_net.propeller.tip_radius,np.ones_like(rpm2_zvar_LargeCW)*rpm2_iso[0][0]/Units.rpm, 'x-', label='Isolated Propeller')
+    #axes.set_xlabel('Vertical Station, $\dfrac{z}{R}$')
+    #axes.set_ylabel("RPMs")
+    #axes.set_title("Effect of propeller location on angular rate")
+    #plt.legend()
+    
+    
+    
+
+    #plt.show()
+    
+    #fig  = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #c    = axes.contourf(zlocs, ylocs, Q_vals,100)#, cmap=cm.jet) #YlOrRd_r
+    #axes.set_ylabel("Spanwise Location (y)")
+    #axes.set_xlabel("Vertical Location(z)")   
+    #axes.set_title("Torque (Nm)")
+    #plt.colorbar(c) 
+    
+    #fig  = plt.figure()
+    #axes = fig.add_subplot(1,1,1)
+    #c    = axes.contourf(zlocs, ylocs, rpm2_vals,100)#, cmap=cm.jet) #YlOrRd_r
+    #axes.set_ylabel("Spanwise Location (y)")
+    #axes.set_xlabel("Vertical Location(z)")   
+    #axes.set_title("Angular Rotation Rate")
+    #plt.colorbar(c)          
